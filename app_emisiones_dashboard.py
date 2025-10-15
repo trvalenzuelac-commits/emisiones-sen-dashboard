@@ -9,8 +9,14 @@ import plotly.express as px
 import locale
 import streamlit.components.v1 as components
 
-# --- Configuración regional (Chile) ---
-locale.setlocale(locale.LC_ALL, 'es_CL.UTF-8')
+
+import locale
+
+try:
+    locale.setlocale(locale.LC_ALL, 'es_CL.UTF-8')
+except locale.Error:
+    # fallback para servidores sin configuración regional chilena
+    locale.setlocale(locale.LC_ALL, 'es_ES.UTF-8')
 
 # --- Configuración de la página ---
 st.set_page_config(page_title="Emisiones SEN - Dashboard", layout="wide")
