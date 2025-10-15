@@ -6,17 +6,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import locale
 import streamlit.components.v1 as components
 
-
-import locale
-
-try:
-    locale.setlocale(locale.LC_ALL, 'es_CL.UTF-8')
-except locale.Error:
-    # fallback para servidores sin configuración regional chilena
-    locale.setlocale(locale.LC_ALL, 'es_ES.UTF-8')
+# --- Función para formato chileno (puntos y comas) ---
+def formato_chileno(numero, decimales=0):
+    try:
+        return f"{numero:,.{decimales}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return str(numero)
 
 # --- Configuración de la página ---
 st.set_page_config(page_title="Emisiones SEN - Dashboard", layout="wide")
@@ -43,25 +40,24 @@ fecha_seleccionada = st.selectbox(
     index=0
 )
 
-# --- Filtrar datos para el día y el mes ---
+# --- Filtrar datos ---
 anio_actual = pd.to_datetime(fecha_seleccionada).year
 mes_actual = pd.to_datetime(fecha_seleccionada).month
 df_dia = df[df["FechaHora"].dt.date == fecha_seleccionada]
 df_mes = df[(df["FechaHora"].dt.month == mes_actual) & (df["FechaHora"].dt.year == anio_actual)]
 
-# --- Cálculos para indicadores ---
+# --- Indicadores principales ---
 total_mes = df_mes["CO2e_t"].sum()
 gen_mes = df_mes["Generacion_MWh"].sum()
 promedio_mes = (total_mes / gen_mes) if gen_mes > 0 else 0
 
-# --- Panel de indicadores superiores ---
 col1, col2, col3 = st.columns(3)
-col1.metric("Emisiones totales mensuales", f"{locale.format_string('%.0f', total_mes, grouping=True).replace(',', '.') } mTCO₂")
-col2.metric("Generación térmica mensual (Carbón, Gas Natural, Diésel y Fuel Oil)", f"{locale.format_string('%.0f', gen_mes, grouping=True).replace(',', '.')} MWh")
-col3.metric("Intensidad promedio mensual", f"{str(promedio_mes).replace('.', ',')[:6]} tCO₂eq/MWh")
+col1.metric("Emisiones totales mensuales", f"{formato_chileno(total_mes, 0)} mTCO₂")
+col2.metric("Generación térmica mensual (Carbón, Gas Natural, Diésel y Fuel Oil)", f"{formato_chileno(gen_mes, 0)} MWh")
+col3.metric("Intensidad promedio mensual", f"{formato_chileno(promedio_mes, 3)} tCO₂eq/MWh")
 
 # -----------------------------------------------------------
-#  Gráfico 1: Emisiones horarias por día seleccionado
+#  Gráfico 1: Emisiones Horarias
 # -----------------------------------------------------------
 st.markdown(
     """
@@ -86,27 +82,18 @@ fig_emisiones = px.line(
     line_shape="spline"
 )
 
-# --- Formato chileno en ejes y hover ---
-fig_emisiones.update_traces(
-    line=dict(color="#003366", width=3),
-    hovertemplate="<b>%{x|%H:%M}</b><br>%{y:,.0f} tCO₂/h<extra></extra>"
-)
+fig_emisiones.update_traces(line=dict(color="#003366", width=3))
 fig_emisiones.update_layout(
     template="simple_white",
     hovermode="x unified",
     font=dict(size=14),
     xaxis_title="Hora del día",
     yaxis_title="mTCO₂/h",
-    yaxis=dict(
-        separatethousands=True,
-        tickformat=",",
-    ),
     plot_bgcolor="white",
     paper_bgcolor="white",
     margin=dict(l=40, r=30, t=40, b=40)
 )
 st.plotly_chart(fig_emisiones, use_container_width=True)
-
 
 # -----------------------------------------------------------
 #  Gráfico 2: Distribución CAISO-style
@@ -119,7 +106,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- Slider de hora ---
 horas_disponibles = sorted(df_dia["FechaHora"].dt.hour.unique())
 hora_elegida = st.slider(
     "Selecciona la hora:",
@@ -131,17 +117,9 @@ hora_elegida = st.slider(
 )
 
 df_hora = df_dia[df_dia["FechaHora"].dt.hour == hora_elegida]
+co2_mix = df_hora.groupby("Subtipo")["CO2e_t"].sum().reset_index()
+co2_mix["Participacion_%"] = co2_mix["CO2e_t"] / co2_mix["CO2e_t"].sum() * 100
 
-# --- Agrupar y calcular porcentajes ---
-co2_mix = (
-    df_hora.groupby("Subtipo")["CO2e_t"]
-    .sum()
-    .reset_index()
-    .rename(columns={"CO2e_t": "CO2e_t_h"})
-)
-co2_mix["Participacion_%"] = co2_mix["CO2e_t_h"] / co2_mix["CO2e_t_h"].sum() * 100
-
-# --- Colores ---
 colores_caiso = {
     "Carbón": "#3c3c3c",
     "Gas Natural": "#d87b00",
@@ -149,11 +127,10 @@ colores_caiso = {
     "Fuel Oil": "#5f0f40",
 }
 
-# --- Anillo ---
 fig_caiso = px.pie(
     co2_mix,
     names="Subtipo",
-    values="CO2e_t_h",
+    values="CO2e_t",
     color="Subtipo",
     color_discrete_map=colores_caiso,
     hole=0.65,
@@ -162,17 +139,13 @@ fig_caiso.update_traces(
     textinfo="percent",
     textposition="inside",
     textfont=dict(size=14, color="white"),
-    hovertemplate="%{label}: %{percent:.1%} (%{value:,.0f} tCO₂/h)",
 )
-total_hora = co2_mix["CO2e_t_h"].sum()
+total_hora = co2_mix["CO2e_t"].sum()
 fig_caiso.update_layout(
     annotations=[
         dict(
-            text=f"<b>{hora_elegida:02d}:00</b><br>{fecha_seleccionada.strftime('%d-%m-%Y')}<br><br><b>{total_hora:,.0f} tCO₂/h</b>",
-            x=0.5,
-            y=0.5,
-            font_size=14,
-            showarrow=False,
+            text=f"<b>{hora_elegida:02d}:00</b><br>{fecha_seleccionada.strftime('%d-%m-%Y')}<br><br><b>{formato_chileno(total_hora, 0)} tCO₂/h</b>",
+            x=0.5, y=0.5, font_size=14, showarrow=False,
         )
     ],
     showlegend=False,
@@ -188,8 +161,8 @@ with col2:
     legend_html = "<div style='margin-top:15px;font-family:Arial, sans-serif;'>"
     for _, row in co2_mix.iterrows():
         color = colores_caiso.get(row["Subtipo"], "#cccccc")
-        porcentaje = str(round(row["Participacion_%"], 1)).replace('.', ',')
-        valor = locale.format_string('%.0f', row["CO2e_t_h"], grouping=True).replace(',', '.')
+        porcentaje = formato_chileno(row["Participacion_%"], 1)
+        valor = formato_chileno(row["CO2e_t"], 0)
         legend_html += f"""
         <div style='display:flex;align-items:center;justify-content:space-between;
                     padding:6px 0;border-bottom:1px solid #f0f0f0;'>
@@ -210,104 +183,6 @@ with col2:
     components.html(legend_html, height=350, scrolling=True)
 
 # -----------------------------------------------------------
-#  Gráfico 3: CO₂ por tipo de recurso (tCO₂/h)
-# -----------------------------------------------------------
-st.markdown(
-    """
-    <h2 style='font-weight:600; margin-top:60px;'>Emisiones horarias por tipo de combustible</h2>
-    <p style='color:gray; margin-top:0;'>CO₂ separado por recurso, promedio horario</p>
-    """,
-    unsafe_allow_html=True,
-)
-
-df["FechaHora"] = pd.to_datetime(df["FechaHora"], errors="coerce")
-df["CO2e_t"] = pd.to_numeric(df["CO2e_t"], errors="coerce")
-df_dia_emis = df[df["FechaHora"].dt.date == fecha_seleccionada]
-
-if not df_dia_emis.empty:
-    emis_horas = (
-        df_dia_emis.groupby([df_dia_emis["FechaHora"].dt.hour, "Subtipo"])["CO2e_t"]
-        .sum()
-        .reset_index()
-        .rename(columns={"FechaHora": "Hora", "CO2e_t": "Emisiones_tCO2_h"})
-    )
-    emis_horas = emis_horas.rename(columns={"FechaHora": "Hora"})
-
-    fig_trend = px.line(
-        emis_horas,
-        x="Hora",
-        y="Emisiones_tCO2_h",
-        color="Subtipo",
-        color_discrete_map=colores_caiso,
-        line_shape="spline",
-        markers=True,
-    )
-
-    fig_trend.update_traces(
-        line=dict(width=3),
-        marker=dict(size=8, line=dict(width=1, color="white")),
-        hovertemplate="<b>%{fullData.name}</b><br>%{x}:00 — %{y:,.0f} tCO₂/h<extra></extra>",
-    )
-
-    fig_trend.update_layout(
-        template="simple_white",
-        xaxis_title="Hora del día",
-        yaxis_title="tCO₂/h",
-        yaxis=dict(separatethousands=True, tickformat=","),
-        hovermode="x unified",
-        font=dict(size=14),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
-    )
-
-    st.plotly_chart(fig_trend, use_container_width=True)
-
-
-# -----------------------------------------------------------
-#  Gráfico 4: Intensidad térmica horaria
-# -----------------------------------------------------------
-st.markdown(
-    """
-    <h2 style='font-weight:600; margin-top:60px;'>Intensidad de Carbono Térmica (tCO₂eq/MWh)</h2>
-    <p style='color:gray; margin-top:0;'>Promedio ponderado hora a hora del mes seleccionado</p>
-    """,
-    unsafe_allow_html=True,
-)
-
-intensidad_mes = (
-    df_mes.groupby("FechaHora")[["CO2e_t", "Generacion_MWh"]].sum().reset_index()
-)
-intensidad_mes["Intensidad_tCO2eq_MWh"] = (
-    intensidad_mes["CO2e_t"] / intensidad_mes["Generacion_MWh"]
-)
-promedio_mes_int = intensidad_mes["Intensidad_tCO2eq_MWh"].mean()
-
-fig_int = px.line(
-    intensidad_mes,
-    x="FechaHora",
-    y="Intensidad_tCO2eq_MWh",
-    line_shape="spline",
-)
-fig_int.add_hline(
-    y=promedio_mes_int,
-    line_dash="dot",
-    line_color="#1b4332",
-    annotation_text=f"Promedio mensual: {str(round(promedio_mes_int,3)).replace('.', ',')} tCO₂eq/MWh",
-    annotation_position="top right",
-)
-fig_int.update_traces(
-    line=dict(color="#2a9d46", width=2.5),
-    hovertemplate="%{x|%d-%m-%Y %H:%M}<br>%{y:,.3f} tCO₂eq/MWh<extra></extra>",
-)
-fig_int.update_layout(
-    template="simple_white",
-    hovermode="x unified",
-    yaxis=dict(separatethousands=True, tickformat=","),
-    xaxis_title="Fecha",
-    yaxis_title="tCO₂eq/MWh",
-)
-st.plotly_chart(fig_int, use_container_width=True)
-
-# -----------------------------------------------------------
 #  Pie de página
 # -----------------------------------------------------------
 st.markdown(
@@ -320,4 +195,3 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
